@@ -54,6 +54,55 @@ class MCPManager:
         self._clients[name] = client
         self._register_tools(name, client.tools)
 
+    async def load_from_config(self, mcp_servers: dict[str, Any]) -> None:
+        """Load MCP servers from configuration dict.
+
+        Config format:
+            mcp_servers:
+              filesystem:
+                command: npx
+                args: ["-y", "@modelcontextprotocol/server-filesystem", "/path"]
+              github:
+                command: npx
+                args: ["-y", "@modelcontextprotocol/server-github"]
+                env:
+                  GITHUB_TOKEN: "${GITHUB_TOKEN}"
+              custom:
+                host: localhost
+                port: 3000
+        """
+        for name, server_cfg in mcp_servers.items():
+            if not server_cfg:
+                continue
+            try:
+                # Support both dict and MCPServerConfig
+                if hasattr(server_cfg, "model_dump"):
+                    cfg = server_cfg.model_dump()
+                else:
+                    cfg = dict(server_cfg)
+
+                command = cfg.get("command", "")
+                host = cfg.get("host", "")
+                port = cfg.get("port", 0)
+
+                if command:
+                    await self.add_server_stdio(
+                        name=name,
+                        command=command,
+                        args=cfg.get("args"),
+                        cwd=cfg.get("cwd") or None,
+                    )
+                elif host and port:
+                    await self.add_server_tcp(
+                        name=name,
+                        host=host,
+                        port=port,
+                    )
+                else:
+                    logger.warning("MCP server '%s': missing command or host+port", name)
+            except Exception:
+                logger.error("Failed to connect MCP server '%s'", name, exc_info=True)
+
     async def remove_server(self, name: str) -> None:
         """Disconnect and remove a server."""
         client = self._clients.pop(name, None)

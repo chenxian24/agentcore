@@ -77,6 +77,17 @@ class PluginConfig(BaseModel):
     options: dict[str, Any] = Field(default_factory=dict)
 
 
+class MCPServerConfig(BaseModel):
+    """Configuration for an MCP server."""
+
+    command: str = ""
+    args: list[str] = Field(default_factory=list)
+    host: str = ""
+    port: int = 0
+    env: dict[str, str] = Field(default_factory=dict)
+    cwd: str = ""
+
+
 class AgentConfig(BaseModel):
     """Main agent configuration."""
 
@@ -87,4 +98,5 @@ class AgentConfig(BaseModel):
     context: ContextConfig = Field(default_factory=ContextConfig)
     runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
     plugins: list[PluginConfig] = Field(default_factory=list)
+    mcp_servers: dict[str, MCPServerConfig] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
