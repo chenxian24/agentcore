@@ -29,6 +29,9 @@ class ToolEntry:
     parameters: dict[str, Any] = field(default_factory=lambda: {"type": "object", "properties": {}})
     check_fn: Callable[[ToolCall], Awaitable[bool]] | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    owner: str = ""
+    output_schema: dict[str, Any] | None = None
+    sort_key: int = 100
 
 
 class ToolRegistry:
@@ -53,6 +56,9 @@ class ToolRegistry:
         parameters: dict[str, Any] | None = None,
         check_fn: Callable[[ToolCall], Awaitable[bool]] | None = None,
         metadata: dict[str, Any] | None = None,
+        owner: str = "",
+        output_schema: dict[str, Any] | None = None,
+        sort_key: int = 100,
     ) -> None:
         """Register a tool handler."""
         self._tools[name] = ToolEntry(
@@ -62,6 +68,9 @@ class ToolRegistry:
             parameters=parameters or {"type": "object", "properties": {}},
             check_fn=check_fn,
             metadata=metadata or {},
+            owner=owner,
+            output_schema=output_schema,
+            sort_key=sort_key,
         )
 
     def unregister(self, name: str) -> None:
@@ -80,7 +89,7 @@ class ToolRegistry:
         return list(self._tools.keys())
 
     def get_tool_definitions(self) -> list[dict[str, Any]]:
-        """Return OpenAI-compatible tool definitions for all registered tools."""
+        """Return OpenAI-compatible tool definitions for all registered tools, sorted by sort_key."""
         return [
             {
                 "type": "function",
@@ -90,7 +99,7 @@ class ToolRegistry:
                     "parameters": entry.parameters,
                 },
             }
-            for entry in self._tools.values()
+            for entry in sorted(self._tools.values(), key=lambda e: e.sort_key)
         ]
 
     async def execute(self, tool_call: ToolCall) -> dict[str, Any]:
@@ -123,10 +132,7 @@ class ToolRegistry:
             if hasattr(entry.handler, 'execute') and not callable(entry.handler):
                 return await entry.handler.execute(tool_call)
             elif callable(entry.handler):
-                if isinstance(args, dict):
-                    result = await entry.handler(**args)
-                else:
-                    result = await entry.handler(args)
+                result = await self._call_handler(entry.handler, args)
                 if isinstance(result, dict):
                     if "success" in result:
                         return result
@@ -138,3 +144,18 @@ class ToolRegistry:
         except Exception as e:
             logger.error("Tool '%s' execution failed: %s", name, e)
             return {"success": False, "output": None, "error": str(e)}
+
+    @staticmethod
+    async def _call_handler(handler: Callable, args: dict[str, Any]) -> Any:
+        """Call a tool handler with the right argument convention.
+
+        Tries **kwargs first (most common), then positional dict, then no-arg.
+        """
+        try:
+            return await handler(**args)
+        except TypeError:
+            pass
+        try:
+            return await handler(args)
+        except TypeError:
+            return await handler()

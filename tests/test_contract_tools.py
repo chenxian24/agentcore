@@ -65,7 +65,8 @@ class TestToolRegistry:
         registry.register("echo", _echo_handler)
         tc = ToolCall(function=ToolCallFunction(name="echo", arguments='{"input": "hello"}'))
         result = await registry.execute(tc)
-        assert result == {"output": "hello"}
+        assert result["output"] == "hello"
+        assert result["success"] is True
 
     @pytest.mark.asyncio
     async def test_execute_unknown_tool(self, registry: ToolRegistry):

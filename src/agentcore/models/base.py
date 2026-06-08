@@ -5,9 +5,42 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from enum import Enum
 from typing import Any, Protocol, Union
 
 from pydantic import BaseModel, Field
+
+
+# ---------------------------------------------------------------------------
+# Thinking / reasoning levels
+# ---------------------------------------------------------------------------
+
+class ThinkingLevel(str, Enum):
+    """Normalized thinking/reasoning levels.
+
+    Providers map these to their native API parameters:
+    - Anthropic: thinking.budget_tokens
+    - OpenAI: reasoning_effort
+    - Others: may ignore or map differently
+    """
+
+    OFF = "off"
+    MINIMAL = "minimal"
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    MAX = "max"
+
+
+# Default budget tokens per level
+_THINKING_BUDGETS: dict[ThinkingLevel, int] = {
+    ThinkingLevel.OFF: 0,
+    ThinkingLevel.MINIMAL: 1024,
+    ThinkingLevel.LOW: 4096,
+    ThinkingLevel.MEDIUM: 10000,
+    ThinkingLevel.HIGH: 32000,
+    ThinkingLevel.MAX: 128000,
+}
 
 
 # ---------------------------------------------------------------------------
@@ -197,6 +230,28 @@ class BaseLLMProvider(ABC):
     @property
     def supports_vision(self) -> bool:
         return False
+
+    # --- thinking level mapping ---
+
+    def map_thinking_level(self, level: ThinkingLevel, model: str = "") -> dict[str, Any]:
+        """Map a normalized ThinkingLevel to provider-specific API parameters.
+
+        Default implementation returns ThinkingConfig params. Override in
+        subclasses for provider-specific mapping (e.g., OpenAI reasoning_effort).
+
+        Args:
+            level: Normalized thinking level.
+            model: Model identifier (for model-specific mapping).
+
+        Returns:
+            Dict of provider-specific kwargs to merge into ChatParams or request body.
+        """
+        if level == ThinkingLevel.OFF:
+            return {}
+        budget = _THINKING_BUDGETS.get(level, 10000)
+        return {
+            "thinking": ThinkingConfig(enabled=True, budget_tokens=budget),
+        }
 
     # --- primary interface (ChatParams) ---
 

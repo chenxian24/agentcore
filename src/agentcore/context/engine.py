@@ -37,6 +37,20 @@ class ContextStrategy(ABC):
         """Return a subset/compression of messages that fits within max_tokens."""
         ...
 
+    def on_session_start(self, session: Any) -> None:
+        """Called when a new session starts. Override to initialize state."""
+
+    def on_turn_end(self, messages: list[Message], response: Any) -> None:
+        """Called after each LLM turn. Override to track state."""
+
+    def should_compress(self, messages: list[Message], max_tokens: int) -> bool:
+        """Return True if compression is needed. Default: always compress."""
+        return True
+
+    def estimate_tokens(self, text: str) -> int:
+        """Estimate token count for text. Default: len(text) // 4."""
+        return len(text) // 4
+
 
 class SlidingWindowStrategy(ContextStrategy):
     """Keep the most recent messages that fit in the budget."""
@@ -49,7 +63,7 @@ class SlidingWindowStrategy(ContextStrategy):
         self._reserve = reserve_tokens
 
     def _estimate_tokens(self, text: str) -> int:
-        return len(text) // 4
+        return self.estimate_tokens(text)
 
     def _estimate_message_tokens(self, msg: Message) -> int:
         """Estimate tokens for a message including tool_calls."""
@@ -170,10 +184,10 @@ class ContextPipeline:
     (by token estimate).
     """
 
-    def __init__(self, max_tokens: int = 128000) -> None:
+    def __init__(self, max_tokens: int = 128000, reserve_tokens: int | None = None) -> None:
         self._sources: list[ContextSourceProvider] = []
         self._max_tokens = max_tokens
-        self._reserve_tokens = 4096
+        self._reserve_tokens = reserve_tokens if reserve_tokens is not None else min(4096, max_tokens // 4)
 
     def add_source(self, source: ContextSourceProvider) -> None:
         """Register a context source provider."""
@@ -264,3 +278,15 @@ class ContextEngine:
 
     def list_strategies(self) -> list[str]:
         return list(self._strategies.keys())
+
+    def on_session_start(self, session: Any, strategy_name: str | None = None) -> None:
+        """Forward session start event to the active strategy."""
+        self.get_strategy(strategy_name).on_session_start(session)
+
+    def on_turn_end(self, messages: list[Message], response: Any, strategy_name: str | None = None) -> None:
+        """Forward turn end event to the active strategy."""
+        self.get_strategy(strategy_name).on_turn_end(messages, response)
+
+    def should_compress(self, messages: list[Message], max_tokens: int, strategy_name: str | None = None) -> bool:
+        """Check if compression is needed via the active strategy."""
+        return self.get_strategy(strategy_name).should_compress(messages, max_tokens)

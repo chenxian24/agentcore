@@ -47,7 +47,7 @@ class StreamEvent(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     @classmethod
-    def text(cls, delta: str) -> StreamEvent:
+    def text_delta(cls, delta: str) -> StreamEvent:
         return cls(type=StreamEventType.TEXT_DELTA, text=delta)
 
     @classmethod
@@ -97,5 +97,5 @@ class StreamEvent(BaseModel):
         )
 
     @classmethod
-    def error(cls, error: str) -> StreamEvent:
+    def error_event(cls, error: str) -> StreamEvent:
         return cls(type=StreamEventType.ERROR, error=error)

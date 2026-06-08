@@ -65,3 +65,7 @@ class ModelRegistry:
     def list_providers(self) -> list[str]:
         """List all registered provider names."""
         return list(self._providers.keys())
+
+    def list_factories(self) -> dict[str, type[BaseLLMProvider]]:
+        """List all registered provider factories."""
+        return dict(self._factories)

@@ -7,11 +7,31 @@ import logging
 import random
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any, TypeVar
 
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
+
+
+class ErrorCategory(str, Enum):
+    """Classification of API errors for retry decisions."""
+
+    TRANSIENT = "transient"  # 429, 500, 502, 503 — retry with backoff
+    CONTEXT_TOO_LONG = "context_too_long"  # Token limit — compress and retry
+    AUTH = "auth"  # 401, 403 — try fallback provider
+    RATE_LIMIT = "rate_limit"  # 429 with retry-after — wait and retry
+    INVALID_REQUEST = "invalid_request"  # 400 — fix messages and retry
+    PERMANENT = "permanent"  # 404, unsupported — no retry
+    UNKNOWN = "unknown"
+
+
+class ErrorClassifier:
+    """Classifies exceptions into error categories for retry decisions."""
+
+    def classify(self, error: Exception) -> ErrorCategory:
+        return ErrorCategory(classify_error(error))
 
 
 @dataclass

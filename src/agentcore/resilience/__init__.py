@@ -1,6 +1,6 @@
 """Resilience mechanisms: retry policies, fallback providers, tool loop control."""
 
-from agentcore.resilience.retry import RetryPolicy, RetryState, ErrorClassifier
 from agentcore.resilience.fallback import FallbackProviderChain
+from agentcore.utils.retry import ErrorCategory, ErrorClassifier, RetryConfig
 
-__all__ = ["RetryPolicy", "RetryState", "ErrorClassifier", "FallbackProviderChain"]
+__all__ = ["ErrorCategory", "ErrorClassifier", "RetryConfig", "FallbackProviderChain"]

@@ -36,6 +36,7 @@ async def run_loop(
     tool_executor: ToolExecutorFn,
     *,
     max_rounds: int = 10,
+    max_workers: int = 1,
     on_tool_call: OnToolCallFn | None = None,
     on_tool_result: OnToolResultFn | None = None,
     on_response: OnResponseFn | None = None,
@@ -51,6 +52,7 @@ async def run_loop(
         params: Chat parameters (model, temperature, tools, etc.).
         tool_executor: Async function that executes a tool call and returns a result dict.
         max_rounds: Maximum tool-call rounds before stopping.
+        max_workers: Max concurrent tool executions per round. 1 = sequential (default).
         on_tool_call: Optional callback before each tool execution.
             If it raises, the tool is skipped. If it sets metadata, it flows to on_tool_result.
         on_tool_result: Optional callback after each tool execution.
@@ -84,39 +86,98 @@ async def run_loop(
         for tc in response.tool_calls:
             all_tool_calls.append(tc)
 
-            # Pre-tool callback
-            if on_tool_call:
-                try:
-                    result = on_tool_call(tc, messages)
-                    if _is_awaitable(result):
-                        await result
-                except Exception as e:
-                    logger.debug("on_tool_call raised for %s: %s", tc.function.name, e)
-                    messages.append(LLMMessage(
-                        role="tool",
-                        content=str(e),
-                        tool_call_id=tc.id,
-                    ))
-                    continue
-
-            # Execute tool
-            tool_result = await tool_executor(tc)
-
-            # Post-tool callback (can transform result)
-            if on_tool_result:
-                transformed = on_tool_result(tc, tool_result, messages)
-                if _is_awaitable(transformed):
-                    transformed = await transformed  # type: ignore[misc]
-                if transformed is not None:
-                    tool_result = transformed
-
-            messages.append(LLMMessage(
-                role="tool",
-                content=str(tool_result.get("output", tool_result.get("error", ""))),
-                tool_call_id=tc.id,
-            ))
+        if max_workers > 1 and len(response.tool_calls) > 1:
+            await _execute_tools_parallel(
+                response.tool_calls, messages, tool_executor,
+                on_tool_call, on_tool_result,
+            )
+        else:
+            for tc in response.tool_calls:
+                await _execute_single_tool(
+                    tc, messages, tool_executor,
+                    on_tool_call, on_tool_result,
+                )
 
     return last_response or LLMResponse()
+
+
+async def _execute_single_tool(
+    tc: ToolCall,
+    messages: list[LLMMessage],
+    tool_executor: ToolExecutorFn,
+    on_tool_call: OnToolCallFn | None,
+    on_tool_result: OnToolResultFn | None,
+) -> None:
+    """Execute a single tool call and append result to messages."""
+    if on_tool_call:
+        try:
+            result = on_tool_call(tc, messages)
+            if _is_awaitable(result):
+                await result
+        except Exception as e:
+            logger.debug("on_tool_call raised for %s: %s", tc.function.name, e)
+            messages.append(LLMMessage(
+                role="tool",
+                content=str(e),
+                tool_call_id=tc.id,
+            ))
+            return
+
+    tool_result = await tool_executor(tc)
+
+    if on_tool_result:
+        transformed = on_tool_result(tc, tool_result, messages)
+        if _is_awaitable(transformed):
+            transformed = await transformed  # type: ignore[misc]
+        if transformed is not None:
+            tool_result = transformed
+
+    messages.append(LLMMessage(
+        role="tool",
+        content=str(tool_result.get("output", tool_result.get("error", ""))),
+        tool_call_id=tc.id,
+    ))
+
+
+async def _execute_tools_parallel(
+    tool_calls: list[ToolCall],
+    messages: list[LLMMessage],
+    tool_executor: ToolExecutorFn,
+    on_tool_call: OnToolCallFn | None,
+    on_tool_result: OnToolResultFn | None,
+) -> None:
+    """Execute multiple tool calls concurrently, preserving result order."""
+    import asyncio
+
+    async def _run_one(tc: ToolCall) -> tuple[ToolCall, dict[str, Any]]:
+        if on_tool_call:
+            try:
+                result = on_tool_call(tc, messages)
+                if _is_awaitable(result):
+                    await result
+            except Exception as e:
+                logger.debug("on_tool_call raised for %s: %s", tc.function.name, e)
+                return tc, {"output": str(e), "error": str(e)}
+
+        tool_result = await tool_executor(tc)
+
+        if on_tool_result:
+            transformed = on_tool_result(tc, tool_result, messages)
+            if _is_awaitable(transformed):
+                transformed = await transformed  # type: ignore[misc]
+            if transformed is not None:
+                tool_result = transformed
+
+        return tc, tool_result
+
+    results = await asyncio.gather(*(_run_one(tc) for tc in tool_calls))
+
+    for tc, tool_result in results:
+        messages.append(LLMMessage(
+            role="tool",
+            content=str(tool_result.get("output", tool_result.get("error", ""))),
+            tool_call_id=tc.id,
+        ))
 
 
 def _is_awaitable(obj: Any) -> bool:

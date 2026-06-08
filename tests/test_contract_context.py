@@ -74,5 +74,5 @@ class TestContextEngine:
 
     def test_unknown_strategy_raises(self):
         e = ContextEngine()
-        with pytest.raises(KeyError):
+        with pytest.raises(ValueError):
             e.get_strategy("nonexistent")

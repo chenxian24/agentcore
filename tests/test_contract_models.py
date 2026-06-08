@@ -14,7 +14,7 @@ from agentcore.tools.result import ToolResult
 
 class TestStreamEvent:
     def test_text_factory(self):
-        e = StreamEvent.text("hello")
+        e = StreamEvent.text_delta("hello")
         assert e.type == StreamEventType.TEXT_DELTA
         assert e.text == "hello"
 
@@ -36,7 +36,7 @@ class TestStreamEvent:
         assert e.finish_reason == "stop"
 
     def test_error_factory(self):
-        e = StreamEvent.error("something broke")
+        e = StreamEvent.error_event("something broke")
         assert e.type == StreamEventType.ERROR
         assert e.error == "something broke"
 
