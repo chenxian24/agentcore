@@ -241,10 +241,35 @@ class AgentRuntime:
     async def _persist_session(self) -> None:
         """Persist the current session to the store."""
         if self._session and self._session_store:
+            # Filter out non-serializable values from metadata (functions, objects, etc.)
+            clean_metadata = {}
+            for k, v in self._session.metadata.items():
+                if k.startswith("_"):
+                    continue  # Skip internal keys (_engine, _current_session, etc.)
+                try:
+                    import json
+                    json.dumps(v)
+                    clean_metadata[k] = v
+                except (TypeError, ValueError):
+                    pass
+
+            config_data = {}
+            if hasattr(self._session.config, "model_dump"):
+                try:
+                    config_data = self._session.config.model_dump()
+                    # Also clean config.metadata
+                    if "metadata" in config_data:
+                        config_data["metadata"] = {
+                            k: v for k, v in config_data["metadata"].items()
+                            if not k.startswith("_")
+                        }
+                except Exception:
+                    pass
+
             data = {
-                "config": self._session.config.model_dump() if hasattr(self._session.config, "model_dump") else {},
+                "config": config_data,
                 "messages": [m.model_dump() for m in self._session.messages],
-                "metadata": self._session.metadata,
+                "metadata": clean_metadata,
                 "created_at": self._session.created_at.isoformat(),
                 "updated_at": self._session.updated_at.isoformat(),
             }
