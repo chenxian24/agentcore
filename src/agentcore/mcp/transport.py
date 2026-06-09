@@ -18,6 +18,9 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
+_DEFAULT_BUFFER_LIMIT = 10 * 1024 * 1024  # 10 MB — must exceed largest MCP response
+
+
 class MCPTransport(ABC):
     """Abstract transport for MCP JSON-RPC communication."""
 
@@ -69,6 +72,7 @@ class StdioTransport(MCPTransport):
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=self._cwd,
+            limit=_DEFAULT_BUFFER_LIMIT,
         )
 
     async def send(self, data: bytes) -> None:
@@ -105,7 +109,9 @@ class TcpTransport(MCPTransport):
         self._writer: asyncio.StreamWriter | None = None
 
     async def connect(self) -> None:
-        self._reader, self._writer = await asyncio.open_connection(self._host, self._port)
+        self._reader, self._writer = await asyncio.open_connection(
+            self._host, self._port, limit=_DEFAULT_BUFFER_LIMIT,
+        )
 
     async def send(self, data: bytes) -> None:
         if not self._writer:
