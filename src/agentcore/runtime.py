@@ -259,7 +259,7 @@ class AgentRuntime:
             config_data = {}
             if hasattr(self._session.config, "model_dump"):
                 try:
-                    config_data = self._session.config.model_dump(exclude_none=True)
+                    config_data = self._session.config.model_dump(exclude_none=True, mode="json")
                 except Exception:
                     pass
             # Strip non-serializable metadata from config
@@ -278,7 +278,7 @@ class AgentRuntime:
 
             data = {
                 "config": config_data,
-                "messages": [m.model_dump() for m in self._session.messages],
+                "messages": [m.model_dump(mode="json") for m in self._session.messages],
                 "metadata": clean_metadata,
                 "created_at": self._session.created_at.isoformat(),
                 "updated_at": self._session.updated_at.isoformat(),
