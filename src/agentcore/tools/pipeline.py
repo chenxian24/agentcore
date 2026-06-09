@@ -1,7 +1,7 @@
 """Tool Execution Pipeline — standardized tool call processing.
 
 Pipeline stages:
-  ToolCall → PolicyPipeline → ApprovalGateway → ToolExecutor → RetryPolicy → ResultTransformer → EventEmitter
+  ToolCall → PolicyPipeline → ApprovalGateway → ToolExecutor → RetryPolicy → OutputGuard → ResultTransformer → EventEmitter
 
 This replaces scattered tool execution logic in runners.
 """
@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from typing import Any, Awaitable, Callable
 
 from agentcore.models.base import ToolCall
@@ -25,12 +26,16 @@ ApprovalHandler = Callable[[ToolCall, dict[str, Any]], Awaitable[bool]]
 ResultTransformer = Callable[[ToolCall, ToolResult], Awaitable[ToolResult]]
 ToolEventEmitter = Callable[[str, dict[str, Any]], Awaitable[None]]
 
+# OutputGuard defaults
+_DEFAULT_MAX_OUTPUT_CHARS = 100_000  # ~25K tokens
+_MAX_LINE_CHARS = 50_000  # single-line protection
+
 
 class ToolPipeline:
     """Standardized tool execution pipeline.
 
     Replaces the ad-hoc _tool_executor closures in runners.
-    Stages: policy check → approval → execute → retry → transform → emit.
+    Stages: policy check → approval → execute → retry → output guard → transform → emit.
     """
 
     def __init__(
@@ -38,6 +43,7 @@ class ToolPipeline:
         registry: ToolRegistry,
         policy: PolicyPipeline | None = None,
         retry_policy: RetryPolicy | None = None,
+        max_output_chars: int | None = None,
     ) -> None:
         self._registry = registry
         self._policy = policy or PolicyPipeline()
@@ -45,6 +51,16 @@ class ToolPipeline:
         self._approval_handler: ApprovalHandler | None = None
         self._transformers: list[ResultTransformer] = []
         self._event_emitter: ToolEventEmitter | None = None
+
+        # OutputGuard config — env var takes precedence
+        env_limit = os.environ.get("AGENTCORE_MAX_TOOL_OUTPUT_CHARS")
+        if env_limit:
+            try:
+                self._max_output_chars = int(env_limit)
+            except ValueError:
+                self._max_output_chars = max_output_chars or _DEFAULT_MAX_OUTPUT_CHARS
+        else:
+            self._max_output_chars = max_output_chars or _DEFAULT_MAX_OUTPUT_CHARS
 
     def set_approval_handler(self, handler: ApprovalHandler) -> None:
         """Set the approval handler for ASK policy decisions."""
@@ -122,7 +138,10 @@ class ToolPipeline:
                 result = ToolResult.fail(str(e))
                 break
 
-        # Stage 3: Transform results
+        # Stage 3: OutputGuard — auto-truncate oversized outputs (before user transformers)
+        result = await self._output_guard(tool_call, result)
+
+        # Stage 4: Transform results
         for transformer in self._transformers:
             try:
                 result = await transformer(tool_call, result)
@@ -139,4 +158,45 @@ class ToolPipeline:
                 "error": result.error,
             })
 
+        return result
+
+    async def _output_guard(self, tool_call: ToolCall, result: ToolResult) -> ToolResult:
+        """Auto-truncate oversized tool outputs (Codex-style middle truncation).
+
+        Preserves head and tail of the output, with a truncation marker in the middle.
+        Also protects against single-line overflow that could break transport framing.
+        """
+        if not result.success or result.output is None:
+            return result
+
+        output = str(result.output)
+        changed = False
+
+        # Single-line protection: split lines and truncate any that are too long
+        if len(output) > _MAX_LINE_CHARS and "\n" not in output[:_MAX_LINE_CHARS]:
+            half = _MAX_LINE_CHARS // 2
+            omitted = len(output) - _MAX_LINE_CHARS
+            output = (
+                output[:half]
+                + f"\n... ({omitted} chars omitted — single line too long) ...\n"
+                + output[-half:]
+            )
+            changed = True
+
+        # Total output truncation (middle truncation, Codex-style)
+        if len(output) > self._max_output_chars:
+            half = self._max_output_chars // 2
+            head = output[:half]
+            tail = output[-half:]
+            omitted = len(output) - self._max_output_chars
+            approx_tokens = len(output) // 4
+            output = (
+                head
+                + f"\n... (truncated {omitted} chars / ~{approx_tokens} tokens — showing head {half} + tail {half}) ...\n"
+                + tail
+            )
+            return ToolResult.ok(output)
+
+        if changed:
+            return ToolResult.ok(output)
         return result

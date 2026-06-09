@@ -96,7 +96,11 @@ class AgentRuntime:
             context=self._context,
             events=self._events,
         )
-        self._tool_pipeline = ToolPipeline(self._tools, self._policy)
+        self._tool_pipeline = ToolPipeline(
+            self._tools,
+            self._policy,
+            max_output_chars=engine.config.runtime.max_tool_output_chars,
+        )
         self._session: Session | None = None
         self._initialized = False
 

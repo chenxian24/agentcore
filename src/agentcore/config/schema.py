@@ -67,6 +67,7 @@ class RuntimeConfig(BaseModel):
 
     max_tool_rounds: int = 20
     max_subtask_agents: int = 5
+    max_tool_output_chars: int = 100_000  # ~25K tokens, Codex-style middle truncation
 
 
 class PluginConfig(BaseModel):
