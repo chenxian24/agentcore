@@ -245,9 +245,8 @@ class AgentRuntime:
             clean_metadata = {}
             for k, v in self._session.metadata.items():
                 if k.startswith("_"):
-                    continue  # Skip internal keys (_engine, _current_session, etc.)
+                    continue
                 try:
-                    import json
                     json.dumps(v)
                     clean_metadata[k] = v
                 except (TypeError, ValueError):
@@ -256,15 +255,22 @@ class AgentRuntime:
             config_data = {}
             if hasattr(self._session.config, "model_dump"):
                 try:
-                    config_data = self._session.config.model_dump()
-                    # Also clean config.metadata
-                    if "metadata" in config_data:
-                        config_data["metadata"] = {
-                            k: v for k, v in config_data["metadata"].items()
-                            if not k.startswith("_")
-                        }
+                    config_data = self._session.config.model_dump(exclude_none=True)
                 except Exception:
                     pass
+            # Strip non-serializable metadata from config
+            if "metadata" in config_data:
+                raw_meta = config_data["metadata"]
+                clean_meta = {}
+                for mk, mv in raw_meta.items():
+                    if mk.startswith("_"):
+                        continue
+                    try:
+                        json.dumps(mv)
+                        clean_meta[mk] = mv
+                    except (TypeError, ValueError):
+                        pass
+                config_data["metadata"] = clean_meta
 
             data = {
                 "config": config_data,
@@ -273,7 +279,10 @@ class AgentRuntime:
                 "created_at": self._session.created_at.isoformat(),
                 "updated_at": self._session.updated_at.isoformat(),
             }
-            await self._session_store.save(self._session.id, data)
+            try:
+                await self._session_store.save(self._session.id, data)
+            except (TypeError, ValueError) as e:
+                logger.warning("Session persistence failed (non-serializable data): %s", e)
 
     # --- Unified agent loop (streaming + tools) ---
 
