@@ -1,7 +1,7 @@
 """Tool Execution Pipeline — standardized tool call processing.
 
 Pipeline stages:
-  ToolCall → PolicyPipeline → ApprovalGateway → ToolExecutor → ResultTransformer → EventEmitter
+  ToolCall → PolicyPipeline → ApprovalGateway → ToolExecutor → RetryPolicy → ResultTransformer → EventEmitter
 
 This replaces scattered tool execution logic in runners.
 """
@@ -16,6 +16,7 @@ from agentcore.models.base import ToolCall
 from agentcore.tools.policy import PolicyContext, PolicyDecision, PolicyPipeline
 from agentcore.tools.registry import ToolRegistry
 from agentcore.tools.result import ToolResult
+from agentcore.tools.retry import NoRetryPolicy, RetryPolicy
 
 logger = logging.getLogger(__name__)
 
@@ -29,16 +30,18 @@ class ToolPipeline:
     """Standardized tool execution pipeline.
 
     Replaces the ad-hoc _tool_executor closures in runners.
-    Stages: policy check → approval → execute → transform → emit.
+    Stages: policy check → approval → execute → retry → transform → emit.
     """
 
     def __init__(
         self,
         registry: ToolRegistry,
         policy: PolicyPipeline | None = None,
+        retry_policy: RetryPolicy | None = None,
     ) -> None:
         self._registry = registry
         self._policy = policy or PolicyPipeline()
+        self._retry_policy = retry_policy or NoRetryPolicy()
         self._approval_handler: ApprovalHandler | None = None
         self._transformers: list[ResultTransformer] = []
         self._event_emitter: ToolEventEmitter | None = None
@@ -54,6 +57,10 @@ class ToolPipeline:
     def set_event_emitter(self, emitter: ToolEventEmitter) -> None:
         """Set the event emitter for tool lifecycle events."""
         self._event_emitter = emitter
+
+    def set_retry_policy(self, policy: RetryPolicy) -> None:
+        """Set the retry policy for tool execution failures."""
+        self._retry_policy = policy
 
     async def execute(
         self,
@@ -95,13 +102,25 @@ class ToolPipeline:
                 "tool_call_id": tool_call.id,
             })
 
-        # Stage 2: Execute
-        try:
-            raw_result = await self._registry.execute(tool_call)
-            result = ToolResult.from_dict(raw_result)
-        except Exception as e:
-            logger.error("Tool execution error: %s — %s", tool_name, e, exc_info=True)
-            result = ToolResult.fail(str(e))
+        # Stage 2: Execute (with optional retry)
+        import asyncio
+        result: ToolResult | None = None
+        attempt = 0
+        while True:
+            try:
+                raw_result = await self._registry.execute(tool_call)
+                result = ToolResult.from_dict(raw_result)
+                break
+            except Exception as e:
+                logger.error("Tool execution error: %s — %s", tool_name, e, exc_info=True)
+                if self._retry_policy.should_retry(attempt, e):
+                    delay = self._retry_policy.get_delay(attempt)
+                    self._retry_policy.on_retry(attempt, e, delay)
+                    await asyncio.sleep(delay)
+                    attempt += 1
+                    continue
+                result = ToolResult.fail(str(e))
+                break
 
         # Stage 3: Transform results
         for transformer in self._transformers:

@@ -33,6 +33,7 @@ class PluginContext:
         self._model_registry = model_registry
         self._extra = extra
         self._plugin_name: str = ""
+        self._session: Any = None
 
     def register_hook(
         self,
@@ -78,6 +79,15 @@ class PluginContext:
     def events(self) -> Any:
         return self._events
 
+    @property
+    def session(self) -> Any:
+        """The current active session. Set by the runtime after session creation."""
+        return self._session
+
+    def set_session(self, session: Any) -> None:
+        """Set the active session reference (called by runtime)."""
+        self._session = session
+
     def register_provider(self, name: str, factory: Any) -> None:
         """Register an LLM provider factory in the model registry."""
         if self._model_registry:
@@ -86,6 +96,14 @@ class PluginContext:
     def get(self, key: str) -> Any:
         """Access extra context values (e.g. mcp_manager, provider)."""
         return self._extra.get(key)
+
+    def register_tokenizer(self, tokenizer: Any) -> None:
+        """Register a custom tokenizer for accurate token estimation.
+
+        The tokenizer is stored in config.metadata["_tokenizer"] and can be
+        used by the context engine and other components.
+        """
+        self._config.metadata["_tokenizer"] = tokenizer
 
 
 class Plugin(ABC):

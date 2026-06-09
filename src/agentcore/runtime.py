@@ -206,6 +206,9 @@ class AgentRuntime:
     async def create_session(self, session_id: str = "") -> Session:
         """Create a new session and dispatch SESSION_CREATED."""
         self._session = self._engine.create_session(session_id)
+        # Make session accessible to plugins via config.metadata
+        if self._engine.config and hasattr(self._engine.config, 'metadata'):
+            self._engine.config.metadata["_current_session"] = self._session
         # SESSION_CREATED hook
         await self._hooks.dispatch(HookContext(
             name=HookName.SESSION_CREATED,

@@ -14,6 +14,7 @@ from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from agentcore.core.message import Message
+    from agentcore.tokenizer import Tokenizer
 
 
 # ---------------------------------------------------------------------------
@@ -247,14 +248,25 @@ class ContextEngine:
 
     Extensions can register custom strategies (e.g. 'hermes_compression')
     that the config's context.strategy field can reference.
+
+    Args:
+        default_strategy: Name of the default compression strategy.
+        tokenizer: Optional custom tokenizer for accurate token estimation.
+            If not provided, strategies use their built-in len(text)//4 approximation.
     """
 
-    def __init__(self, default_strategy: str = "sliding_window") -> None:
+    def __init__(self, default_strategy: str = "sliding_window", tokenizer: Any = None) -> None:
         self._strategies: dict[str, ContextStrategy] = {
             "sliding_window": SlidingWindowStrategy(),
             "summarization": SummarizationStrategy(),
         }
         self._default = default_strategy
+        self._tokenizer = tokenizer
+
+    @property
+    def tokenizer(self) -> Any:
+        """The custom tokenizer, if one was provided."""
+        return self._tokenizer
 
     def register_strategy(self, strategy: ContextStrategy) -> None:
         self._strategies[strategy.name] = strategy
